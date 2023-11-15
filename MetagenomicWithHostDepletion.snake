@@ -1,0 +1,213 @@
+"""
+Author: J. Hughes
+Affiliation: CVR Bioinformatics
+Aim: A Snakemake workflow to processing Illumina reads from a metagenomic sample from a known host
+Date: 18 Jan 2022
+Run: snakemake  --snakefile MetagenomicWithHostDepletion.snake  
+snakemake --dag --snakefile MetagenomicWithHostDepletion.snake -j 8 | dot -Tsvg > dag.svg 
+Latest modification: 
+  - todo:
+    * 
+"""
+
+import os
+
+# read config info into this namespace
+configfile: "config.yaml"
+print(config['input_path'])
+
+##--------------------------------------------------------------------------------------##
+## The list of samples to be processed
+##--------------------------------------------------------------------------------------##
+
+
+# /alpha_trans/alpha_home1/illumina/MiSeq1_backup/211028_M01569_0190_000000000-JTGDT/fastq_files/P269/
+PREFIX = config["input_path"]
+FILES = glob_wildcards(f'{PREFIX}/{{name}}_R1_001.fastq.gz')
+# extract the {smp} values into a list
+SAMPLES = FILES.name
+print(SAMPLES)
+NB_SAMPLES = len(SAMPLES)
+
+
+for smp in SAMPLES:
+  message: "Sample " + smp + " will be processed"
+
+rule all: 
+  input: 
+      expand("trimmed/{smp}_trim_1.fq", smp=SAMPLES),
+      expand("mapped_reads/{smp}_bwa.bam", smp=SAMPLES),
+      expand("unmapped/{smp}_1.fq", smp=SAMPLES),
+      expand("spades/{smp}/contigs.fasta", smp=SAMPLES),
+      expand("diamond/{smp}.m8", smp=SAMPLES),
+      expand("diamond/{smp}_viral_contig.txt", smp=SAMPLES),
+      expand("diamond/{smp}_krona.html", smp=SAMPLES),
+      expand("viral_mapped_reads/{smp}_viral_bowtie2.bam", smp=SAMPLES),
+      expand("viral_mapped_reads/{smp}_viral_bowtie2_stats.txt", smp=SAMPLES),
+      expand("viral_mapped_reads/{smp}_per_virus.txt", smp=SAMPLES),
+      expand("viral_mapped_reads/{smp}_summary.txt", smp=SAMPLES)  
+
+ruleorder: trimgalore > bwa > extract_unmapped > spades > diamond > krona > bowtie2_viral_contigs > collate_virus_stats > uniq_virus_mapped
+
+rule trimgalore:
+    input:
+        #fq1 = config["input_path"] + "{smp}_R1_001.fastq.gz",
+        r1 = f"{PREFIX}/{{smp}}_R1_001.fastq.gz",
+        r2 = f"{PREFIX}/{{smp}}_R2_001.fastq.gz"
+
+        #r1="/alpha_trans/alpha_home1/illumina/MiSeq1_backup/211028_M01569_0190_000000000-JTGDT/fastq_files/P269/{smp}_R1_001.fastq.gz",
+        #r2="/alpha_trans/alpha_home1/illumina/MiSeq1_backup/211028_M01569_0190_000000000-JTGDT/fastq_files/P269/{smp}_R2_001.fastq.gz"
+    output:
+        trim1="trimmed/{smp}_trim_1.fq",
+        trim2="trimmed/{smp}_trim_2.fq",
+        singles="trimmed/{smp}_trim_unpaired.fq"
+    shell:"""
+        trim_galore --quality 30 --length 50 --retain_unpaired --stringency 1 --dont_gzip --paired {input.r1} {input.r2} -o trimmed -j 2
+        mv trimmed/{wildcards.smp}*_val_1.fq {output.trim1}
+        mv trimmed/{wildcards.smp}*_val_2.fq {output.trim2}
+        cat trimmed/{wildcards.smp}*_unpaired_1.fq trimmed/{wildcards.smp}*_unpaired_2.fq > {output.singles}
+    """
+
+rule bwa:
+    input:
+      r1=rules.trimgalore.output.trim1,
+      r2=rules.trimgalore.output.trim2
+    params:
+      ref=config["host_genome"],
+    output:
+      bam="mapped_reads/{smp}_bwa.bam",
+    shell:"""
+      bwa mem {params.ref} {input.r1} {input.r2} | samtools view -bS | samtools sort -o {output.bam}
+      samtools index {output.bam}
+    """
+
+rule extract_unmapped:
+    input:
+      bam=rules.bwa.output.bam
+    output:
+      unmapped1="unmapped/{smp}_1.fq",
+      unmapped2="unmapped/{smp}_2.fq",
+      unmappeds="unmapped/{smp}_singletons.fq"
+    shell:"""
+      samtools fastq -1 {output.unmapped1} -2 {output.unmapped2} -n -f 12 {input.bam}
+      samtools fastq -f 4 -F 264 {input.bam} > {output.unmappeds}
+    """
+
+ 
+# # spades: spades.py -1 $1 -2 $2  -t $threads --only-assembler -o $3_spades_output 
+# # -s for single-end
+rule spades:
+   input:
+      unmapped1="unmapped/{smp}_1.fq",
+      unmapped2="unmapped/{smp}_2.fq",
+      unmappeds="unmapped/{smp}_singletons.fq"
+   params:
+       dir="spades/{smp}",
+   threads: 8
+   output:
+      contig="spades/{smp}/contigs.fasta"
+   shell:"""
+      spades.py --meta -1 {input.unmapped1} -2 {input.unmapped2} -s {input.unmappeds} -t {threads} --only-assembler -o {params.dir}
+      head -n1 {output.contig}
+   """
+
+rule diamond:
+   input:
+      contig=rules.spades.output.contig,
+      db=config['diamond_db']
+   output:
+      dmnd="diamond/{smp}.m8"
+   threads: 8
+   shell:"""
+      diamond blastx -d {input.db} -q {input.contig} -o {output.dmnd} --top 5 --threads {threads}  -b12 -c1
+   """
+
+#bash ~/bin/metagenomic_scripts/filter_viral_contigs.sh {input.diamond}
+#join -t $'\t' -1 2 -2 1 <(sort -k 2 ${stub}_contig_acc.txt ) <(sort -k 1 ${stub}_acc_taxid.txt ) > ${stub}_contig_acc_taxid.txt
+
+
+rule get_viral_contig_ids:
+   input:
+      diamond=rules.diamond.output.dmnd
+   output:
+       list="diamond/{smp}_viral_contig.txt",
+       taxid="diamond/{smp}_contig_acc_taxid.tsv"
+   params:
+       stub="diamond/{smp}"
+   shell:"""
+      bash ~/bin/generic_pipes/metagenomic_with_host_depletion/filter_viral_contigs.sh {input.diamond}
+      head -n1 {output.list}
+      head -n1 {output.taxid}
+   """
+
+rule extract_viral_contigs:
+    input:
+        list=rules.get_viral_contig_ids.output.list,
+        contigs=rules.spades.output.contig
+    output:
+       viral_contigs="viral_contigs/{smp}.fasta"
+    shell:"""
+        ~/bin/Sequence-manipulation/SelectSeq.pl -in {input.contigs} -idfile {input.list} -out {output.viral_contigs}
+    """ 
+
+rule bowtie2_viral_contigs:
+    input:
+      viral_contigs=rules.extract_viral_contigs.output.viral_contigs,
+      r1=rules.trimgalore.output.trim1,
+      r2=rules.trimgalore.output.trim2,
+      singles=rules.trimgalore.output.singles
+    output:
+      bam="viral_mapped_reads/{smp}_viral_bowtie2.bam",
+    shell:"""
+      bowtie2-build {input.viral_contigs} {input.viral_contigs}
+      bowtie2 -q -x {input.viral_contigs} -1 {input.r1} -2 {input.r2} -U {input.singles} | samtools view -bS  -F 4 - | samtools sort -o {output.bam}
+    """
+
+rule weeSAM:
+    input:
+      bam=rules.bowtie2_viral_contigs.output.bam,
+    output:
+      stats="viral_mapped_reads/{smp}_viral_bowtie2_stats.txt",
+    shell:"""
+      weeSAM --bam {input.bam} --out {output.stats} --overwrite
+    """
+
+rule collate_virus_stats:
+    input:
+      stats=rules.weeSAM.output.stats,
+      taxid=rules.get_viral_contig_ids.output.taxid
+    output:
+      collated="viral_mapped_reads/{smp}_summary.txt",
+    shell:"""
+      python ~/bin/generic_pipes/metagenomic_with_host_depletion/combine_mappedreads_hit.py -s {input.stats} -t {input.taxid} -o {output.collated}
+    """
+
+rule krona:
+   input:
+      dmnd=rules.diamond.output.dmnd
+   output:
+      krona="diamond/{smp}_krona.html"
+   shell:"""
+      ktImportBLAST {input.dmnd} -o {output.krona} -tax  /db/kronatools/taxonomy
+   """
+
+rule uniq_virus_mapped:
+  input:
+    summary=rules.collate_virus_stats.output.collated,
+    bam=rules.bowtie2_viral_contigs.output.bam
+  output:
+    stats="viral_mapped_reads/{smp}_per_virus.txt"
+  params:
+    stub="viral_mapped_reads/{smp}"
+  shell:"""
+     python ~/bin/generic_pipes/metagenomic_with_host_depletion/filterviralhits.py -c {input.summary} -o {output.stats} -s {params.stub} -b {input.bam}
+  """
+
+# 
+# 
+# # stats of counts
+# # ~/bin/count_fastq.gz.sh data4/V_18_0421133_J_S4_R1_001.fastq.gz 
+# # ~/bin/count_fastq.sh trimmed/V_17_0451122_A_S5_trimmomatic_R1.fastq 
+# # ~/bin/count_fastq.sh trimmed/V_17_0451122_A_S5_trimmomatic_unpaired.fastq 
+# # ribopicker=> filtered/V_17_0455610_Z_S3_R1.fq   ribopicker/V_17_0455610_Z_S3_unpaired.fq
+# # host => unmapped/V_17_0451122_A_S11_2.fq  unmapped/V_17_0451122_A_S11_singletons.fq

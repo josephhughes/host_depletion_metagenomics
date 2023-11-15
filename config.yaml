@@ -1,0 +1,13 @@
+##### Input Path to fastq paired reads #####
+input_path: /home1/illumina/NextSeq4_NB552752_backup/Fastq/230703_NB552752_0008_AHT2TCAFX3
+
+##### Output Path to results ######
+output_path: metagenomic_output
+
+##### Other Parameters #####
+
+##### Resources #####
+host_genome: /db/wgs/Human/ensembl99/bwa/Human.fa
+diamond_db: /db/diamond/nr.dmnd
+
+
