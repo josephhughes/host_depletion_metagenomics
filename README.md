@@ -22,3 +22,7 @@ Modify the paths in `config.yaml` to provide:
 ``snakemake -s /path/to/MetagenomicWithHostDepletion.snake -j 8``
 
 Use `-j` to specify the number of concurrent threads you can use. 
+
+## Pipeline overview
+
+Currently the pipeline looks like this:![overview of pipeline](dag.svg)
