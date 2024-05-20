@@ -1,4 +1,4 @@
-### _Metagenomis with hst depletion_
+### _Metagenomics with host depletion_
 
 ## Installation
 
