@@ -137,7 +137,7 @@ rule get_viral_contig_ids:
        stub="diamond/{smp}",
        script=os.path.join(workflow.current_basedir, "utils/filter_viral_contigs.sh")  
    shell:"""
-      bash {input.filter_script} {input.diamond}
+      bash {params.script} {input.diamond}
       head -n1 {output.list}
       head -n1 {output.taxid}
    """
