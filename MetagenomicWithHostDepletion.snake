@@ -128,14 +128,16 @@ rule diamond:
 
 rule get_viral_contig_ids:
    input:
-      diamond=rules.diamond.output.dmnd
+      diamond=rules.diamond.output.dmnd,
+      
    output:
        list="diamond/{smp}_viral_contig.txt",
        taxid="diamond/{smp}_contig_acc_taxid.tsv"
    params:
-       stub="diamond/{smp}"
+       stub="diamond/{smp}",
+       script=os.path.join(workflow.current_basedir, "utils/filter_viral_contigs.sh")  
    shell:"""
-      bash ~/bin/generic_pipes/metagenomic_with_host_depletion/filter_viral_contigs.sh {input.diamond}
+      bash {input.filter_script} {input.diamond}
       head -n1 {output.list}
       head -n1 {output.taxid}
    """
@@ -144,10 +146,12 @@ rule extract_viral_contigs:
     input:
         list=rules.get_viral_contig_ids.output.list,
         contigs=rules.spades.output.contig
+    params:
+        script=os.path.join(workflow.current_basedir, "utils/SelectSeq.pl") 
     output:
        viral_contigs="viral_contigs/{smp}.fasta"
     shell:"""
-        ~/bin/Sequence-manipulation/SelectSeq.pl -in {input.contigs} -idfile {input.list} -out {output.viral_contigs}
+        {params.script} -in {input.contigs} -idfile {input.list} -out {output.viral_contigs}
     """ 
 
 rule bowtie2_viral_contigs:
@@ -166,20 +170,24 @@ rule bowtie2_viral_contigs:
 rule weeSAM:
     input:
       bam=rules.bowtie2_viral_contigs.output.bam,
+    params:
+        script=os.path.join(workflow.current_basedir, "utils/weeSAM") 
     output:
       stats="viral_mapped_reads/{smp}_viral_bowtie2_stats.txt",
     shell:"""
-      weeSAM --bam {input.bam} --out {output.stats} --overwrite
+      {params.script} --bam {input.bam} --out {output.stats} --overwrite
     """
 
 rule collate_virus_stats:
     input:
       stats=rules.weeSAM.output.stats,
-      taxid=rules.get_viral_contig_ids.output.taxid
+      taxid=rules.get_viral_contig_ids.output.taxid,
+    params:
+        script=os.path.join(workflow.current_basedir, "utils/combine_mappedreads_hit.py") 
     output:
       collated="viral_mapped_reads/{smp}_summary.txt",
     shell:"""
-      python ~/bin/generic_pipes/metagenomic_with_host_depletion/combine_mappedreads_hit.py -s {input.stats} -t {input.taxid} -o {output.collated}
+      {params.script} -s {input.stats} -t {input.taxid} -o {output.collated}
     """
 
 rule krona:
@@ -198,9 +206,10 @@ rule uniq_virus_mapped:
   output:
     stats="viral_mapped_reads/{smp}_per_virus.txt"
   params:
-    stub="viral_mapped_reads/{smp}"
+    stub="viral_mapped_reads/{smp}",
+    script=os.path.join(workflow.current_basedir, "utils/filterviralhits.py")
   shell:"""
-     python ~/bin/generic_pipes/metagenomic_with_host_depletion/filterviralhits.py -c {input.summary} -o {output.stats} -s {params.stub} -b {input.bam}
+     {params.script} -c {input.summary} -o {output.stats} -s {params.stub} -b {input.bam}
   """
 
 # 
