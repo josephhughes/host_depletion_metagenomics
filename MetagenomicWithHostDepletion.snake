@@ -126,25 +126,143 @@ rule diamond:
 #join -t $'\t' -1 2 -2 1 <(sort -k 2 ${stub}_contig_acc.txt ) <(sort -k 1 ${stub}_acc_taxid.txt ) > ${stub}_contig_acc_taxid.txt
 
 
-rule get_viral_contig_ids:
+# rule get_viral_contig_ids:
+#    input:
+#       diamond=rules.diamond.output.dmnd,
+#       
+#    output:
+#        list="diamond/{smp}_viral_contig.txt",
+#        taxid="diamond/{smp}_contig_acc_taxid.tsv"
+#    params:
+#        stub="diamond/{smp}",
+#        script=os.path.join(workflow.current_basedir, "utils/filter_viral_contigs.sh")  
+#    shell:"""
+#       echo {params.script}
+#       bash {params.script} {input.diamond}
+#       head -n1 {output.list}
+#       head -n1 {output.taxid}
+#    """
+
+# rule get_viral_contig_ids:
+#    input:
+#       diamond=rules.diamond.output.dmnd,
+#       
+#    output:
+#        joined="diamond/{smp}_joined.tsv",
+#        list="diamond/{smp}_viral_contig.txt",
+#        taxid="diamond/{smp}_contig_acc_taxid.tsv",
+#        contig_acc="diamond/{smp}_contig_acc.tsv",
+#        acc="diamond/{smp}_acc.txt",
+#        acc_taxid="diamond/{smp}_acc_taxids.txt"
+#    params:
+#        stub="diamond/{smp}",
+#        script=os.path.join(workflow.current_basedir, "utils/join_tables_by_col.py"),
+#        viraldb="/home1/jh212a/mydbs/viral_prot.accession2taxid",
+#        deaddb="/home1/jh212a/mydbs/viral_dead_prot.accession2taxid"  
+#    shell:"""
+# 
+#      cat {input.diamond} | cut -f 1,2 | sort | uniq > {output.contig_acc}
+#      cut -f2 {output.contig_acc} | sort | uniq > {output.acc} 
+#      fgrep -w -f {output.acc} {params.viraldb} > {output.acc_taxid} 
+#      fgrep -w -f {output.acc} {params.deaddb} >> {output.acc_taxid}  
+#      python {params.script} --file1 {output.contig_acc} --file2 {output.acc_taxid} -s {params.stub} --col1 2 --col2 1 
+#      head {output.joined} 
+#      cut -f1,2,4 {output.joined} | sort | uniq > {output.taxid} 
+#      cut -f1 {output.joined} | sort | uniq > {output.list} 
+#    """
+rule get_contig_acc:
    input:
-      diamond=rules.diamond.output.dmnd,
-      
+      diamond=rules.diamond.output.dmnd,      
    output:
-       list="diamond/{smp}_viral_contig.txt",
-       taxid="diamond/{smp}_contig_acc_taxid.tsv"
+       contig_acc="diamond/{smp}_contig_acc.tsv"
+   shell:"""
+     cat {input.diamond} | cut -f 1,2 | sort | uniq > {output.contig_acc}
+   """
+
+rule get_acc:
+   input:
+      contig_acc=rules.get_contig_acc.output.contig_acc,      
+   output:
+       acc="diamond/{smp}_acc.txt"
+   shell:"""
+     cut -f2 {input.contig_acc} | sort | uniq > {output.acc} 
+   """
+
+rule get_taxid_set:
+   input:
+      acc=rules.get_acc.output.acc,      
+   output:
+       livetaxid="diamond/{smp}_acc_livetaxids.txt",
+       deadtaxid="diamond/{smp}_acc_deadtaxids.txt",
+   params:
+       viraldb="/home1/jh212a/mydbs/viral_prot.accession2taxid",
+       deaddb="/home1/jh212a/mydbs/viral_dead_prot.accession2taxid"     
+   shell:"""
+     fgrep -w -f {input.acc} {params.viraldb} > {output.livetaxid} 
+     fgrep -w -f {input.acc} {params.deaddb} >> {output.deadtaxid}  
+   """
+
+rule get_taxid:
+   input:
+      livetaxid=rules.get_taxid_set.output.livetaxid,  
+      deadtaxid=rules.get_taxid_set.output.deadtaxid    
+   output:
+       taxid="diamond/{smp}_acc_taxids.txt",
+   shell:"""
+     cat {input.livetaxid} {input.deadtaxid} > {output.taxid} 
+   """
+
+rule join_info:
+   input:
+      contig_acc=rules.get_contig_acc.output.contig_acc,  
+      acc_taxid=rules.get_taxid.output.taxid    
+   output:
+       joined="diamond/{smp}_joined.tsv",
    params:
        stub="diamond/{smp}",
-       script=os.path.join(workflow.current_basedir, "utils/filter_viral_contigs.sh")  
+       script=os.path.join(workflow.current_basedir, "utils/join_tables_by_col.py"),
    shell:"""
-      bash {params.script} {input.diamond}
-      head -n1 {output.list}
-      head -n1 {output.taxid}
+     python {params.script} --file1 {input.contig_acc} --file2 {input.acc_taxid} -s {params.stub} --col1 2 --col2 1 
+     head {output.joined} 
    """
+
+rule cut_cols:
+   input:
+      joined=rules.join_info.output.joined,      
+   output:
+       list="diamond/{smp}_viral_contig.txt",
+       taxid="diamond/{smp}_contig_acc_taxid.tsv",
+   shell:"""
+     cut -f1,2,4 {input.joined} | sort | uniq > {output.taxid} 
+     cut -f1 {input.joined} | sort | uniq > {output.list} 
+   """
+
+
+
+# diamond=$1
+# #stub=$(basename $diamond)
+# #stub=${stub%.*}
+# stub=${diamond%.*}
+# #echo $stub
+# cat $diamond | cut -f 1,2 | sort | uniq > ${stub}_contig_acc.txt
+# head ${stub}_contig_acc.txt
+# cut -f2 ${stub}_contig_acc.txt | sort | uniq > ${stub}_acc.txt
+# fgrep -w -f ${stub}_acc.txt /home1/jh212a/mydbs/viral_dead_prot.accession2taxid > ${stub}_acc_taxid.txt
+# fgrep -w -f ${stub}_acc.txt /home1/jh212a/mydbs/viral_dead_prot.accession2taxid >> ${stub}_acc_taxid.txt
+# head ${stub}_acc_taxid.txt
+# #join -t $'\t' -1 2 -2 1 <(sort -k 2 ${stub}_contig_acc.txt ) <(sort -k 1 ${stub}_acc_taxid.txt ) > ${stub}_contig_acc_taxid.txt
+# python /home1/jh212a/bin/generic_pipes/metagenomic_with_host_depletion/utils/join_tables_by_col.py --file1 ${stub}_contig_acc.txt --file2 ${stub}_acc_taxid.txt -s ${stub} --col1 2 --col2 1
+# head ${stub}_joined.tsv
+# cut -f1,2,4 ${stub}_joined.tsv | sort | uniq > ${stub}_contig_acc_taxid.tsv
+# head ${stub}_contig_acc_taxid.tsv
+# cut -f1 ${stub}_joined.tsv | sort | uniq > ${stub}_viral_contig.txt
+# head ${stub}_viral_contig.txt
+
+
 
 rule extract_viral_contigs:
     input:
-        list=rules.get_viral_contig_ids.output.list,
+        list=rules.cut_cols.output.list,
         contigs=rules.spades.output.contig
     params:
         script=os.path.join(workflow.current_basedir, "utils/SelectSeq.pl") 
@@ -181,13 +299,13 @@ rule weeSAM:
 rule collate_virus_stats:
     input:
       stats=rules.weeSAM.output.stats,
-      taxid=rules.get_viral_contig_ids.output.taxid,
+      taxid=rules.cut_cols.output.taxid,
     params:
         script=os.path.join(workflow.current_basedir, "utils/combine_mappedreads_hit.py") 
     output:
       collated="viral_mapped_reads/{smp}_summary.txt",
     shell:"""
-      {params.script} -s {input.stats} -t {input.taxid} -o {output.collated}
+      python {params.script} -s {input.stats} -t {input.taxid} -o {output.collated}
     """
 
 rule krona:
@@ -209,7 +327,7 @@ rule uniq_virus_mapped:
     stub="viral_mapped_reads/{smp}",
     script=os.path.join(workflow.current_basedir, "utils/filterviralhits.py")
   shell:"""
-     {params.script} -c {input.summary} -o {output.stats} -s {params.stub} -b {input.bam}
+     python {params.script} -c {input.summary} -o {output.stats} -s {params.stub} -b {input.bam}
   """
 
 # 
