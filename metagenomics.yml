@@ -13,4 +13,5 @@ dependencies:
   - ca-certificates
   - certifi
   - openssl
-prefix: /home1/jh212a/miniconda3/envs/metagenomics
+  - matplotlib
+
