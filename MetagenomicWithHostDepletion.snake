@@ -198,8 +198,8 @@ rule get_taxid_set:
        viraldb="/home1/jh212a/mydbs/viral_prot.accession2taxid",
        deaddb="/home1/jh212a/mydbs/viral_dead_prot.accession2taxid"     
    shell:"""
-     fgrep -w -f {input.acc} {params.viraldb} > {output.livetaxid} 
-     fgrep -w -f {input.acc} {params.deaddb} >> {output.deadtaxid}  
+     fgrep -w -f {input.acc} {params.viraldb} > {output.livetaxid} || true
+     fgrep -w -f {input.acc} {params.deaddb} > {output.deadtaxid}  || true
    """
 
 rule get_taxid:
