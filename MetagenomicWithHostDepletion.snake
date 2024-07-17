@@ -5,7 +5,8 @@ Aim: A Snakemake workflow to processing Illumina reads from a metagenomic sample
 Date: 18 Jan 2022
 Run: snakemake  --snakefile MetagenomicWithHostDepletion.snake  
 snakemake --dag --snakefile MetagenomicWithHostDepletion.snake -j 8 | dot -Tsvg > dag.svg 
-Latest modification: 
+Latest modification:
+  - added the -m 600 argument to increase RAM as one of ape poo failed 
   - todo:
     * 
 """
@@ -107,7 +108,7 @@ rule spades:
    output:
       contig="spades/{smp}/contigs.fasta"
    shell:"""
-      spades.py --meta -1 {input.unmapped1} -2 {input.unmapped2} -s {input.unmappeds} -t {threads} --only-assembler -o {params.dir}
+      spades.py --meta -1 {input.unmapped1} -2 {input.unmapped2} -s {input.unmappeds} -t {threads} --only-assembler -o {params.dir} -m 600
       head -n1 {output.contig}
    """
 
