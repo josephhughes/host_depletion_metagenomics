@@ -12,6 +12,7 @@ Latest modification:
 """
 
 import os
+import gzip
 
 # read config info into this namespace
 configfile: "config.yaml"
@@ -23,10 +24,52 @@ print(config['input_path'])
 
 
 # /alpha_trans/alpha_home1/illumina/MiSeq1_backup/211028_M01569_0190_000000000-JTGDT/fastq_files/P269/
-PREFIX = config["input_path"]
-FILES = glob_wildcards(f'{PREFIX}/{{name}}_R1_001.fastq.gz')
+#PREFIX = config["input_path"]
+#FILES = glob_wildcards(f'{PREFIX}/{{name}}_R1_001.fastq.gz')
 # extract the {smp} values into a list
-SAMPLES = FILES.name
+#SAMPLES = FILES.name
+
+################################################################
+# ensure paired files
+PREFIX = config["input_path"]
+
+# Capture paired-end files with a wildcard for the 'read' part (R1 and R2)
+FILES = glob_wildcards(f'{PREFIX}/{{name}}_R{{read}}_001.fastq.gz')
+
+# Extract unique sample names
+SAMPLES = list(set(FILES.name))
+
+# check files are non-empty
+def check_non_empty(sample):
+    """Check if both R1 and R2 files for the sample are non-empty."""
+    r1_file = f'{PREFIX}/{sample}_R1_001.fastq.gz'
+    r2_file = f'{PREFIX}/{sample}_R2_001.fastq.gz'
+    
+    # Check if both files exist and are non-empty
+    return os.path.getsize(r1_file) > 0 and os.path.getsize(r2_file) > 0
+
+# need to check for content because some files have white lines and are 4Kb in size
+# check has content
+def check_has_content(sample):
+    """Check if both R1 and R2 files for the sample contain non-whitespace data."""
+    r1_file = f'{PREFIX}/{sample}_R1_001.fastq.gz'
+    r2_file = f'{PREFIX}/{sample}_R2_001.fastq.gz'
+
+    def file_has_content(file):
+        with gzip.open(file, 'rt') as f:
+            for line in f:
+                # Return True if a non-whitespace line is found
+                if line.strip():
+                    return True
+        return False
+    
+    # Check both R1 and R2 files for actual content
+    return file_has_content(r1_file) and file_has_content(r2_file)
+
+# Filter the samples to keep only those with non-empty paired-end files
+SAMPLES = [sample for sample in SAMPLES if check_has_content(sample)]
+################################################################
+
 print(SAMPLES)
 NB_SAMPLES = len(SAMPLES)
 
@@ -63,10 +106,17 @@ rule trimgalore:
         trim2="trimmed/{smp}_trim_2.fq",
         singles="trimmed/{smp}_trim_unpaired.fq"
     shell:"""
+     if [ -s {input.r1} ] 
+     then
         trim_galore --quality 30 --length 50 --retain_unpaired --stringency 1 --dont_gzip --paired {input.r1} {input.r2} -o trimmed -j 2
         mv trimmed/{wildcards.smp}*_val_1.fq {output.trim1}
         mv trimmed/{wildcards.smp}*_val_2.fq {output.trim2}
         cat trimmed/{wildcards.smp}*_unpaired_1.fq trimmed/{wildcards.smp}*_unpaired_2.fq > {output.singles}
+     else
+        touch {output.trim1}
+        touch {output.trim2}
+        touch {output.singles}
+     fi
     """
 
 rule bwa:
@@ -108,9 +158,18 @@ rule spades:
    output:
       contig="spades/{smp}/contigs.fasta"
    shell:"""
+     if [ -s {input.unmappeds} ] 
+     then
       spades.py --meta -1 {input.unmapped1} -2 {input.unmapped2} -s {input.unmappeds} -t {threads} --only-assembler -o {params.dir} -m 600
       head -n1 {output.contig}
+     else
+      spades.py --meta -1 {input.unmapped1} -2 {input.unmapped2} -t {threads} --only-assembler -o {params.dir} -m 600
+      head -n1 {output.contig}     
+     fi
    """
+
+
+
 
 rule diamond:
    input:
@@ -282,9 +341,15 @@ rule bowtie2_viral_contigs:
     output:
       bam="viral_mapped_reads/{smp}_viral_bowtie2.bam",
     shell:"""
-      bowtie2-build {input.viral_contigs} {input.viral_contigs}
-      bowtie2 -q -x {input.viral_contigs} -1 {input.r1} -2 {input.r2} -U {input.singles} | samtools view -bS  -F 4 - | samtools sort -o {output.bam}
+      if [ -s {input.viral_contigs} ] 
+      then
+        bowtie2-build {input.viral_contigs} {input.viral_contigs}
+        bowtie2 -q -x {input.viral_contigs} -1 {input.r1} -2 {input.r2} -U {input.singles} | samtools view -bS  -F 4 - | samtools sort -o {output.bam}        
+      else
+        touch {output.bam}
+      fi
     """
+
 
 rule weeSAM:
     input:
@@ -294,7 +359,12 @@ rule weeSAM:
     output:
       stats="viral_mapped_reads/{smp}_viral_bowtie2_stats.txt",
     shell:"""
-      {params.script} --bam {input.bam} --out {output.stats} --overwrite
+      if [ -s {input.bam} ]
+      then
+        {params.script} --bam {input.bam} --out {output.stats} --overwrite
+      else
+        touch {output.stats}
+      fi
     """
 
 rule collate_virus_stats:
