@@ -15,4 +15,5 @@ dependencies:
   - openssl
   - matplotlib
   - etetoolkit::ete3
+  - ivar=1.3.1
 
